@@ -1,6 +1,9 @@
 package dev.atvremote.app
 
 import android.app.Application
+import android.content.Intent
+import android.os.SystemClock
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import dev.atvremote.protocol.companion.AppInfo
@@ -12,6 +15,7 @@ import dev.atvremote.protocol.airplay.Ap2Session
 import dev.atvremote.protocol.airplay.AirPlayAuth
 import dev.atvremote.protocol.airplay.AirPlayConnection
 import dev.atvremote.protocol.mrp.NowPlaying
+import dev.atvremote.protocol.mrp.PlaybackState
 import dev.atvremote.protocol.discovery.AppleTvDevice
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -19,6 +23,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -50,8 +55,17 @@ data class UiState(
     val keyboardOpen: Boolean = false,
     /** Text currently in the focused field on the TV, null if none is focused. */
     val fieldText: String? = null,
+    /**
+     * Whether the TV itself reports a focused field, as opposed to the user
+     * having opened the keyboard by hand.
+     */
+    val textFieldFocused: Boolean = false,
     val checkingField: Boolean = false,
     val nowPlaying: NowPlaying? = null,
+    /** Playhead in seconds as of [playheadAt], or null if none is known. */
+    val playhead: Double? = null,
+    val playheadAt: Long = 0L,
+    val playheadAdvancing: Boolean = false,
     val airplayPaired: Boolean = false,
     val nowPlayingError: String? = null,
     val reconnecting: Boolean = false,
@@ -59,6 +73,44 @@ data class UiState(
     val error: String? = null,
     val pairedKeys: Set<String> = emptySet(),
 )
+
+/**
+ * The playhead right now, carried forward from the last anchor.
+ *
+ * The Apple TV reports a position occasionally, not every second, so the
+ * scrubber has to run the clock itself between updates.
+ */
+fun UiState.positionNow(): Double? {
+    val base = playhead ?: return null
+    if (!playheadAdvancing) return base
+    val since = (SystemClock.elapsedRealtime() - playheadAt) / 1000.0
+    return (base + since).coerceAtMost(nowPlaying?.duration ?: Double.MAX_VALUE)
+}
+
+/**
+ * Fold in a now-playing update, re-anchoring the playhead only when the device
+ * reports a new one or playback starts or stops. Re-anchoring on every message
+ * would let a metadata-only update — fresh artwork, say — rewind the scrubber
+ * to a position sampled seconds ago.
+ */
+fun UiState.withNowPlaying(playing: NowPlaying?): UiState {
+    if (playing == null) {
+        return copy(nowPlaying = null, playhead = null, playheadAdvancing = false)
+    }
+    val advancing = playing.playbackState == PlaybackState.PLAYING
+    val resampled = playing.elapsedTime != nowPlaying?.elapsedTime
+    if (!resampled && advancing == playheadAdvancing) return copy(nowPlaying = playing)
+    return copy(
+        nowPlaying = playing,
+        // Falling back to the reported position matters on the first update
+        // that carries one: without it the anchor stays null, and the seek
+        // the notification offers has nothing to seek from.
+        playhead = if (resampled) playing.position?.first
+        else positionNow() ?: playing.position?.first,
+        playheadAt = SystemClock.elapsedRealtime(),
+        playheadAdvancing = advancing,
+    )
+}
 
 class RemoteViewModel(app: Application) : AndroidViewModel(app) {
 
@@ -79,9 +131,116 @@ class RemoteViewModel(app: Application) : AndroidViewModel(app) {
     private val _state = MutableStateFlow(UiState())
     val state: StateFlow<UiState> = _state.asStateFlow()
 
+    /** Whether the media notification's service has been asked to run. */
+    private var notificationRunning = false
+
+    /** Last prompt posted, so an unchanged one is not reposted on every update. */
+    private var keyboardPrompt: Pair<String, String?>? = null
+
     init {
         dev.atvremote.protocol.Log.enabled = BuildConfig.WIRE_LOGGING
+        NotificationBridge.handleCommands(::handleRemoteCommand)
+        viewModelScope.launch {
+            _state.collect {
+                syncNotification(it)
+                syncKeyboardNotification(it)
+            }
+        }
         scan()
+    }
+
+    // ----------------------------------------------------- media notification
+
+    /**
+     * Mirror the connection into the notification.
+     *
+     * The service cannot reach the Apple TV itself, so it is handed a flat
+     * snapshot and sends commands back the other way.
+     *
+     * It runs for as long as the remote is connected rather than only while
+     * something plays. Two reasons: Android 12 forbids starting a foreground
+     * service from the background, so waiting for playback would mean the
+     * notification could never appear unless the app happened to be open; and
+     * the foreground service is itself what keeps the connections alive once
+     * the app leaves the screen.
+     */
+    private fun syncNotification(state: UiState) {
+        val device = (state.screen as? Screen.Remote)?.device
+        if (device == null) {
+            // A null snapshot is the service's cue to stop itself.
+            if (notificationRunning) {
+                notificationRunning = false
+                NotificationBridge.publish(null)
+            }
+            return
+        }
+
+        val playing = state.nowPlaying?.takeIf { it.isActive }
+        NotificationBridge.publish(
+            NowPlayingSnapshot(
+                deviceName = device.name,
+                title = playing?.title,
+                artist = playing?.artist,
+                album = playing?.album,
+                artwork = playing?.artwork,
+                playing = playing?.playbackState == PlaybackState.PLAYING,
+                position = state.positionNow(),
+                duration = playing?.position?.second,
+                volume = state.volume?.takeIf { state.capabilities?.volume == true },
+            )
+        )
+
+        if (!notificationRunning) {
+            notificationRunning = true
+            // Connecting always follows a tap, so this start is a foreground
+            // one — but a race with the app being dismissed would otherwise
+            // take the whole process down, and losing the notification is a
+            // far better outcome than a crash.
+            runCatching {
+                ContextCompat.startForegroundService(
+                    getApplication(),
+                    Intent(getApplication(), NowPlayingService::class.java),
+                )
+            }.onFailure {
+                notificationRunning = false
+                android.util.Log.w("atv", "could not start the now-playing notification", it)
+            }
+        }
+    }
+
+    /**
+     * Offer the keyboard for as long as the TV is asking for text.
+     *
+     * Reposted when the field's contents change so the shade reflects what has
+     * landed — which is also what clears the spinner after a direct reply.
+     */
+    private fun syncKeyboardNotification(state: UiState) {
+        val device = (state.screen as? Screen.Remote)?.device
+        if (device == null || !state.textFieldFocused) {
+            if (keyboardPrompt != null) {
+                keyboardPrompt = null
+                KeyboardNotification.hide(getApplication())
+            }
+            return
+        }
+
+        val prompt = device.name to state.fieldText
+        if (prompt == keyboardPrompt) return
+        keyboardPrompt = prompt
+        KeyboardNotification.show(getApplication(), device.name, state.fieldText)
+    }
+
+    private fun handleRemoteCommand(command: RemoteCommand) {
+        when (command) {
+            is RemoteCommand.PlayPause -> press(Button.PLAY_PAUSE)
+            is RemoteCommand.Skip -> skip(command.seconds)
+            is RemoteCommand.SeekTo -> seekTo(command.seconds)
+            is RemoteCommand.SetVolume -> setVolume(command.level)
+            is RemoteCommand.SendText -> sendText(command.text)
+            is RemoteCommand.AdjustVolume ->
+                if (command.direction > 0) volumeUp()
+                else if (command.direction < 0) volumeDown()
+        }
     }
 
     fun dismissError() = _state.update { it.copy(error = null) }
@@ -204,7 +363,17 @@ class RemoteViewModel(app: Application) : AndroidViewModel(app) {
         r.onDisconnect = {
             // Reflect reality rather than leaving a stale "Connected" label.
             // The next command reconnects on demand.
-            _state.update { s -> s.copy(nowPlaying = null, capabilities = null) }
+            //
+            // Focus goes with it: the field the TV was asking about is gone,
+            // and a reply typed into a notification that outlived the
+            // connection would be swallowed with the spinner left turning.
+            _state.update { s ->
+                s.withNowPlaying(null).copy(
+                    capabilities = null,
+                    textFieldFocused = false,
+                    fieldText = null,
+                )
+            }
         }
         // Mirror the first-party remote: when the Apple TV focuses a text
         // field, present the keyboard automatically; dismiss it when focus
@@ -214,10 +383,12 @@ class RemoteViewModel(app: Application) : AndroidViewModel(app) {
                 if (session != null) st.copy(
                     keyboardOpen = true,
                     fieldText = session.textBeforeCursor,
+                    textFieldFocused = true,
                     checkingField = false,
                 ) else st.copy(
                     keyboardOpen = false,
                     fieldText = null,
+                    textFieldFocused = false,
                     checkingField = false,
                 )
             }
@@ -292,9 +463,8 @@ class RemoteViewModel(app: Application) : AndroidViewModel(app) {
                         apps = emptyList(),
                         capabilities = null,
                         volume = null,
-                        nowPlaying = null,
                         airplayPaired = store.isAirPlayPaired(device.credentialKey),
-                    )
+                    ).withNowPlaying(null)
                 }
                 currentDevice = device
                 // Now-playing must come up on every connect. Previously this
@@ -332,9 +502,9 @@ class RemoteViewModel(app: Application) : AndroidViewModel(app) {
                 _state.update { it.copy(nowPlayingError = null) }
                 val session = Ap2Session(device.address, credentials, netScope)
                 session.onNowPlaying = { np ->
-                    _state.update { it.copy(nowPlaying = np) }
+                    _state.update { it.withNowPlaying(np) }
                 }
-                session.onDisconnect = { _state.update { it.copy(nowPlaying = null) } }
+                session.onDisconnect = { _state.update { it.withNowPlaying(null) } }
                 session.connect()
                 ap2 = session
             } catch (e: Exception) {
@@ -342,7 +512,7 @@ class RemoteViewModel(app: Application) : AndroidViewModel(app) {
                 // Now-playing is optional; a failure here must not break the
                 // remote, but it must still be visible rather than silent.
                 android.util.Log.w("atv", "now-playing tunnel failed", e)
-                _state.update { it.copy(nowPlaying = null, nowPlayingError = e.message) }
+                _state.update { it.withNowPlaying(null).copy(nowPlayingError = e.message) }
             }
         }
     }
@@ -385,8 +555,7 @@ class RemoteViewModel(app: Application) : AndroidViewModel(app) {
                     screen = Screen.DeviceList,
                     apps = emptyList(),
                     volume = null,
-                    nowPlaying = null,
-                )
+                ).withNowPlaying(null)
             }
         }
     }
@@ -425,7 +594,20 @@ class RemoteViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun press(button: Button) = command { press(button) }
+
+    /** Press and hold, which tvOS treats as a separate gesture from a tap. */
+    fun hold(button: Button) = command { press(button, holdMs = HOLD_MS) }
+
     fun holdHome() = command { holdHome() }
+
+    /**
+     * tvOS exposes sleep and wake as distinct commands rather than a toggle,
+     * and nothing on the wire reports which state the device is in, so the two
+     * stay separate here instead of being guessed at.
+     */
+    fun sleep() = command { sleep() }
+
+    fun wake() = command { wake() }
     fun swipe(sx: Int, sy: Int, ex: Int, ey: Int, ms: Long) = command { swipe(sx, sy, ex, ey, ms) }
 
     fun volumeUp() = command {
@@ -436,6 +618,13 @@ class RemoteViewModel(app: Application) : AndroidViewModel(app) {
     fun volumeDown() = command {
         press(Button.VOLUME_DOWN)
         refreshVolume()
+    }
+
+    /** Jump straight to a level, which is what the notification's slider does. */
+    fun setVolume(level: Double) {
+        val clamped = level.coerceIn(0.0, 1.0)
+        _state.update { it.copy(volume = clamped) }
+        command { setVolume(clamped) }
     }
 
     private fun refreshVolume() {
@@ -507,9 +696,49 @@ class RemoteViewModel(app: Application) : AndroidViewModel(app) {
     fun launchApp(bundleId: String) = command { launchApp(bundleId) }
 
     /** Seek relative to the current position; negative rewinds. */
-    fun skip(seconds: Double) = command { skipBy(seconds) }
+    /** Long enough for tvOS to read a hold rather than a tap. */
+    private val HOLD_MS = 1000L
+
+    fun skip(seconds: Double) {
+        nudgePlayhead(seconds)
+        command { skipBy(seconds) }
+    }
+
+    /**
+     * Seek to an absolute position. Companion Link only offers a relative
+     * skip, so this asks for the difference from where the playhead is
+     * believed to be.
+     */
+    fun seekTo(seconds: Double) {
+        val current = _state.value.positionNow() ?: return
+        skip(seconds - current)
+    }
+
+    /**
+     * Move the local anchor immediately, so the scrubber follows the finger
+     * instead of snapping back until the device reports the new position.
+     */
+    private fun nudgePlayhead(seconds: Double) = _state.update { s ->
+        val from = s.positionNow() ?: return@update s
+        // Only META_ELAPSED is sanity-checked on the way in, so a duration
+        // that is negative or NaN reaches here intact and would make coerceIn
+        // throw on its own arguments.
+        val limit = s.nowPlaying?.duration?.takeIf { it.isFinite() && it > 0 }
+            ?: Double.MAX_VALUE
+        s.copy(
+            playhead = (from + seconds).coerceIn(0.0, limit),
+            playheadAt = SystemClock.elapsedRealtime(),
+        )
+    }
 
     override fun onCleared() {
+        // The notification outlives neither the connection nor this view model,
+        // which owns it, so both go at once.
+        NotificationBridge.handleCommands(null)
+        NotificationBridge.publish(null)
+        notificationRunning = false
+        keyboardPrompt = null
+        KeyboardNotification.hide(getApplication())
         runCatching { remote?.close() }
         runCatching { ap2?.close() }
         closePairing()

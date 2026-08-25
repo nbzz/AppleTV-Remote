@@ -227,7 +227,11 @@ class Ap2Session(
         state.message(Mrp.STATE_PLAYBACK_QUEUE)?.let { queue ->
             val items = queue.messages(Mrp.QUEUE_CONTENT_ITEMS)
             val index = (queue.varint(Mrp.QUEUE_LOCATION) ?: 0L).toInt()
-            items.getOrNull(index)?.let { entry = applyContentItem(entry, it) }
+            // The title from before this message: the nowPlayingInfo branch
+            // above may already have written the new one, which would hide the
+            // track change from the guard in applyContentItem.
+            val priorTitle = clients[bundleId]?.title
+            items.getOrNull(index)?.let { entry = applyContentItem(entry, it, priorTitle) }
         }
 
         clients[bundleId] = entry
@@ -235,19 +239,44 @@ class Ap2Session(
         if (bundleId == activeBundleId || activeBundleId == null) publish(entry)
     }
 
-    private fun applyContentItem(current: NowPlaying, item: ProtoMessage): NowPlaying {
+    private fun applyContentItem(
+        current: NowPlaying,
+        item: ProtoMessage,
+        priorTitle: String?,
+    ): NowPlaying {
         var updated = current
         item.bytes(Mrp.CI_ARTWORK_DATA)
             ?.takeIf { it.isNotEmpty() }
             ?.let { updated = updated.copy(artwork = it) }
 
         val metadata = item.message(Mrp.CI_METADATA) ?: return updated
+        val title = metadata.string(Mrp.META_TITLE)
+
+        // A different item invalidates the playhead. Carrying the old one over
+        // would leave the scrubber showing the previous track's position until
+        // the device volunteers a fresh timing update, which it need not do
+        // until playback state next changes.
+        if (title != null && priorTitle != null && title != priorTitle) {
+            updated = updated.copy(duration = null, elapsedTime = null)
+        }
+
+        val duration = metadata.double(Mrp.META_DURATION) ?: updated.duration
+
+        // META_ELAPSED is inferred rather than confirmed against a reference,
+        // so a value that cannot be a playhead is treated as a misread and
+        // dropped. `metadata` prints the field numbers it carries, which is
+        // what to compare against if the scrubber never appears.
+        val elapsed = metadata.double(Mrp.META_ELAPSED)
+            ?.takeIf { it.isFinite() && it >= 0 && (duration == null || it <= duration) }
+        Log.d { "content item $metadata elapsed=$elapsed duration=$duration" }
+
         return updated.copy(
-            title = metadata.string(Mrp.META_TITLE) ?: updated.title,
+            title = title ?: updated.title,
             artist = metadata.string(Mrp.META_TRACK_ARTIST)
                 ?: metadata.string(Mrp.META_SUBTITLE) ?: updated.artist,
             album = metadata.string(Mrp.META_ALBUM) ?: updated.album,
-            duration = metadata.double(Mrp.META_DURATION) ?: updated.duration,
+            duration = duration,
+            elapsedTime = elapsed ?: updated.elapsedTime,
         )
     }
 
@@ -268,7 +297,9 @@ class Ap2Session(
         if (update == null) return
         val bundleId = activeBundleId ?: return
         var entry = clients[bundleId] ?: NowPlaying()
-        for (item in update.messages(1)) entry = applyContentItem(entry, item)
+        for (item in update.messages(1)) {
+            entry = applyContentItem(entry, item, entry.title)
+        }
         clients[bundleId] = entry
         publish(entry)
     }

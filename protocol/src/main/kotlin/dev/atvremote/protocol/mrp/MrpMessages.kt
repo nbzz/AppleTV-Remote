@@ -63,6 +63,8 @@ object Mrp {
     const val META_SUBTITLE = 2
     const val META_ALBUM = 6
     const val META_TRACK_ARTIST = 7
+    // The playhead rides on the content item; nowPlayingInfo rarely carries it.
+    const val META_ELAPSED = 12
     const val META_DURATION = 14
 
     /**
@@ -150,6 +152,18 @@ data class NowPlaying(
     val isActive: Boolean
         get() = title != null || artist != null || playbackState != PlaybackState.UNKNOWN
 
+    /**
+     * Playhead and length, or null when the device has not reported a usable
+     * pair. Live streams report no duration, and a stale elapsed time from the
+     * previous item would otherwise draw a bogus scrubber.
+     */
+    val position: Pair<Double, Double>?
+        get() {
+            val total = duration?.takeIf { it.isFinite() && it > 0 } ?: return null
+            val elapsed = elapsedTime?.takeIf { it.isFinite() && it >= 0 } ?: return null
+            return elapsed.coerceAtMost(total) to total
+        }
+
     fun describe(): String = buildString {
         append(playbackState.name)
         title?.let { append(" — \"$it\"") }
@@ -171,7 +185,9 @@ data class NowPlaying(
         other is NowPlaying && title == other.title && artist == other.artist &&
             album == other.album && appName == other.appName &&
             playbackState == other.playbackState &&
+            duration == other.duration && elapsedTime == other.elapsedTime &&
             (artwork?.size ?: 0) == (other.artwork?.size ?: 0)
 
-    override fun hashCode(): Int = listOf(title, artist, album, appName, playbackState).hashCode()
+    override fun hashCode(): Int =
+        listOf(title, artist, album, appName, playbackState, duration, elapsedTime).hashCode()
 }
