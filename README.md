@@ -270,11 +270,13 @@ Two things that are easy to get wrong:
 - **`PlayerPath.client` is field 2, not 1** — field 1 is `origin`. Reading
   field 1 yields the device's own name for every app, silently collapsing all
   players into one entry so one app's metadata leaks onto another.
-- **The playhead rides on the content item too.** Elapsed time is read from
-  field 12 of the same metadata message that carries the title, alongside
-  `duration` at field 14. That field number is inferred rather than confirmed
-  against a specification: if scrubbers never appear, it is the first thing to
-  check with `-PwireLogging=true`.
+- **The playhead rides on the content item too.** Elapsed time is
+  `ContentItemMetadata.elapsedTime`, field 35, alongside `duration` at 14 —
+  not the `nowPlayingInfo` pair, which is usually absent. Field 12 is
+  `releaseDate` and is also a double, so guessing at it decodes cleanly and
+  yields a playhead of roughly the year 2015 in seconds. Field numbers here
+  are worth checking against pyatv's `.proto` definitions rather than
+  inferring, precisely because a wrong one need not fail loudly.
 
 Position updates arrive sporadically, so the UI extrapolates between them from
 an anchor — the last reported playhead and the moment it landed — rather than

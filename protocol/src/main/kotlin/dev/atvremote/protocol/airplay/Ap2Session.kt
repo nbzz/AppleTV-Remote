@@ -262,10 +262,8 @@ class Ap2Session(
 
         val duration = metadata.double(Mrp.META_DURATION) ?: updated.duration
 
-        // META_ELAPSED is inferred rather than confirmed against a reference,
-        // so a value that cannot be a playhead is treated as a misread and
-        // dropped. `metadata` prints the field numbers it carries, which is
-        // what to compare against if the scrubber never appears.
+        // A value that cannot be a playhead is dropped: live streams report no
+        // duration, and a stale elapsed time would draw a scrubber that lies.
         val elapsed = metadata.double(Mrp.META_ELAPSED)
             ?.takeIf { it.isFinite() && it >= 0 && (duration == null || it <= duration) }
         Log.d { "content item $metadata elapsed=$elapsed duration=$duration" }

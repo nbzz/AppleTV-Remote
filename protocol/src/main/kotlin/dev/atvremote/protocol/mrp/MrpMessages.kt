@@ -64,7 +64,10 @@ object Mrp {
     const val META_ALBUM = 6
     const val META_TRACK_ARTIST = 7
     // The playhead rides on the content item; nowPlayingInfo rarely carries it.
-    const val META_ELAPSED = 12
+    // Field 12 is releaseDate, which is also a double and so decodes without
+    // complaint — the reason this was worth checking against pyatv's
+    // ContentItemMetadata rather than inferring.
+    const val META_ELAPSED = 35
     const val META_DURATION = 14
 
     /**
