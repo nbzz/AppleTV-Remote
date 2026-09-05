@@ -66,4 +66,4 @@ Link 协议 —— 不需要 companion 服务器、不需要 Python 桥接、也
 
 ## 许可
 
-见 [LICENCE](LICENCE)。
+见 [LICENSE](LICENSE)。

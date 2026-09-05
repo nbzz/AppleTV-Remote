@@ -450,11 +450,13 @@ private fun TouchPad(
                             val dy = start.y - size.height / 2f
                             hypot(dx, dy) < centreRadius
                         }
-                        android.util.Log.d("atv_pad", "down at $start centreDown=$centreDown")
 
+                        // Rim presses hold the HID key down, so tvOS
+                        // repeats the direction for as long as the finger
+                        // stays; the response is instantaneous.
                         var rimDirection: Button? = null
                         if (!centreDown) {
-                            rimDirection = run {
+                            val dir = run {
                                 val dx = start.x - size.width / 2f
                                 val dy = start.y - size.height / 2f
                                 if (abs(dx) > abs(dy)) {
@@ -463,10 +465,8 @@ private fun TouchPad(
                                     if (dy > 0) Button.DOWN else Button.UP
                                 }
                             }
-                            // Rim presses hold the HID key down, so tvOS
-                            // repeats the direction for as long as the finger
-                            // stays; the response is instantaneous.
-                            onDirectionDown(rimDirection)
+                            onDirectionDown(dir)
+                            rimDirection = dir
                         }
 
                         var drag = false
@@ -525,7 +525,6 @@ private fun TouchPad(
                         }
 
                         if (drag) {
-                            android.util.Log.d("atv_pad", "drag committed")
                             if (rimDirection != null) onDirectionUp(rimDirection)
                             onTouch(500, 500, TouchPhase.PRESS)
                             while (true) {
