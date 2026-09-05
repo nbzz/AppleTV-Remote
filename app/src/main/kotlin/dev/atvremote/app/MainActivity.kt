@@ -4,16 +4,20 @@ import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.view.KeyEvent
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.viewModels
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.darkColorScheme
+import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -33,7 +37,21 @@ private val DarkColors = darkColorScheme(
     error = Color(0xFFFF6B6B),
 )
 
+private val LightColors = lightColorScheme(
+    primary = Color(0xFF0A5AC8),
+    onPrimary = Color.White,
+    surface = Color(0xFFFFFFFF),
+    onSurface = Color(0xFF1A1A1C),
+    background = Color(0xFFF2F2F6),
+    onBackground = Color(0xFF1A1A1C),
+    surfaceVariant = Color(0xFFE4E4EB),
+    onSurfaceVariant = Color(0xFF54545E),
+    error = Color(0xFFB3261E),
+)
+
 class MainActivity : ComponentActivity() {
+
+    private val vm: RemoteViewModel by viewModels()
 
     // Registered unconditionally: the contract has to be in place before the
     // activity resumes, whether or not this build will ever ask.
@@ -45,7 +63,10 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         askForNotifications()
         setContent {
-            MaterialTheme(colorScheme = DarkColors) {
+            // The remote follows the system just like the TV does: charcoal
+            // surfaces in the dark, a pale aluminium look in the light.
+            val dark = isSystemInDarkTheme()
+            MaterialTheme(colorScheme = if (dark) DarkColors else LightColors) {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background,
@@ -54,6 +75,25 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    /**
+     * While the remote is on screen and the TV can route volume, the phone's
+     * volume keys drive the TV's volume instead of the phone's. Key repeats
+     * arrive as further ACTION_DOWNs, so holding a key steps continuously.
+     */
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        if (event.keyCode == KeyEvent.KEYCODE_VOLUME_UP ||
+            event.keyCode == KeyEvent.KEYCODE_VOLUME_DOWN
+        ) {
+            if (vm.handlesVolumeKeys()) {
+                if (event.action == KeyEvent.ACTION_DOWN) {
+                    vm.onVolumeKey(event.keyCode == KeyEvent.KEYCODE_VOLUME_UP)
+                }
+                return true
+            }
+        }
+        return super.dispatchKeyEvent(event)
     }
 
     /**
