@@ -882,6 +882,13 @@ private fun NowPlayingCard(state: UiState, playing: NowPlaying, vm: RemoteViewMo
             }
         }
 
+        val elapsed = position
+        val duration = playing.position?.second
+        if (elapsed != null && duration != null) {
+            Spacer(Modifier.height(12.dp))
+            Scrubber(elapsed, duration) { vm.seekTo(it) }
+        }
+
         // Transport stays available while paused: skipping about is as useful
         // then as it is during playback. The play/pause button itself lives in
         // the bottom transport row, so it is not repeated here.
