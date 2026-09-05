@@ -421,7 +421,6 @@ private fun TouchPad(
 
                     fun direction(pos: Offset) {
                         haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                        android.util.Log.d("atv_pad", "direction at $pos")
                         val dx = pos.x - size.width / 2f
                         val dy = pos.y - size.height / 2f
                         val button = if (abs(dx) > abs(dy)) {
