@@ -309,12 +309,10 @@ fun RemoteScreen(device: AppleTvDevice, state: UiState, vm: RemoteViewModel) {
 }
 
 /**
- * The now-playing card, shown only while there is actual content on the TV.
- *
- * An idle player keeps reporting itself — paused, no title, no length — and a
- * card of nothing is pure noise. Content means the wire carried a title or a
- * duration; anything else folds the card away and lets the pad breathe. The
- * card grows and fades rather than jolting the column as it comes and goes.
+ * The now-playing card, always visible while paired. Keeping it permanent
+ * (playing or not) keeps the pad's size — and with it the tap-vs-swipe
+ * geometry — identical in every state, which the gesture classifier relies
+ * on. When nothing plays the card simply says so.
  */
 @Composable
 private fun NowPlayingSection(
@@ -323,20 +321,8 @@ private fun NowPlayingSection(
     vm: RemoteViewModel,
 ) {
     Spacer(Modifier.height(12.dp))
-    if (state.airplayPaired) {
-        val playing = state.nowPlaying?.takeIf {
-            it.isActive && (it.title != null || it.duration != null)
-        }
-        AnimatedVisibility(
-            visible = playing != null,
-            enter = fadeIn() + expandVertically(),
-            exit = fadeOut() + shrinkVertically(),
-        ) {
-            NowPlayingCard(state, playing ?: NowPlaying(), vm)
-        }
-    } else {
-        EnableNowPlaying(device, state, vm)
-    }
+    if (state.airplayPaired) NowPlayingCard(state, state.nowPlaying ?: NowPlaying(), vm)
+    else EnableNowPlaying(device, state, vm)
 }
 
 @Composable
@@ -435,6 +421,7 @@ private fun TouchPad(
 
                     fun direction(pos: Offset) {
                         haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        android.util.Log.d("atv_pad", "direction at $pos")
                         val dx = pos.x - size.width / 2f
                         val dy = pos.y - size.height / 2f
                         val button = if (abs(dx) > abs(dy)) {
@@ -463,6 +450,7 @@ private fun TouchPad(
                             val dy = start.y - size.height / 2f
                             hypot(dx, dy) < centreRadius
                         }
+                        android.util.Log.d("atv_pad", "down at $start centreDown=$centreDown")
 
                         var rimDirection: Button? = null
                         if (!centreDown) {
@@ -537,6 +525,7 @@ private fun TouchPad(
                         }
 
                         if (drag) {
+                            android.util.Log.d("atv_pad", "drag committed")
                             if (rimDirection != null) onDirectionUp(rimDirection)
                             onTouch(500, 500, TouchPhase.PRESS)
                             while (true) {
@@ -604,8 +593,6 @@ private fun TouchPad(
         }
     }
 }
-
-private enum class Mode { Undecided, Tap, RimTap, Drag, HoldSelect, RimHold }
 
 /**
  * Fire [onStep] once on touch-down, then keep repeating while the finger stays
@@ -819,6 +806,9 @@ private fun NowPlayingCard(state: UiState, playing: NowPlaying, vm: RemoteViewMo
     Column(
         modifier = Modifier
             .fillMaxWidth()
+            // Fixed height: the card must occupy the same space whether it is
+            // empty or full — the pad's touch geometry depends on it.
+            .height(188.dp)
             .clip(RoundedCornerShape(16.dp))
             .background(MaterialTheme.colorScheme.surface)
             .padding(14.dp),
@@ -877,7 +867,7 @@ private fun NowPlayingCard(state: UiState, playing: NowPlaying, vm: RemoteViewMo
                     fontSize = 16.sp,
                     fontWeight = FontWeight.SemiBold,
                     color = MaterialTheme.colorScheme.onSurface,
-                    maxLines = 2,
+                    maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
                 playing.artist?.takeIf { it.isNotBlank() }?.let {
