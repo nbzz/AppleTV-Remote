@@ -26,6 +26,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.lifecycle.viewmodel.compose.viewModel
 
 private val DarkColors = darkColorScheme(
+    primaryContainer = Color(0xFF2C2C2E),
+    onPrimaryContainer = Color(0xFFFFFFFF),
     primary = Color(0xFF6EA8FF),
     onPrimary = Color(0xFF00203F),
     surface = Color(0xFF16161B),
@@ -38,6 +40,10 @@ private val DarkColors = darkColorScheme(
 )
 
 private val LightColors = lightColorScheme(
+    // Apple-native button look: charcoal keys with white foreground on the
+    // pale remote body.
+    primaryContainer = Color(0xFF1C1C1E),
+    onPrimaryContainer = Color(0xFFFFFFFF),
     primary = Color(0xFF0A5AC8),
     onPrimary = Color.White,
     surface = Color(0xFFFFFFFF),
