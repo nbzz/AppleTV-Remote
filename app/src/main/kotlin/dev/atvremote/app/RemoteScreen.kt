@@ -682,14 +682,14 @@ private fun RoundButton(icon: ImageVector, description: String, onClick: () -> U
         modifier = Modifier
             .size(64.dp)
             .clip(CircleShape)
-            .background(MaterialTheme.colorScheme.surface)
+            .background(MaterialTheme.colorScheme.primaryContainer)
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
         Icon(
             icon,
             contentDescription = description,
-            tint = MaterialTheme.colorScheme.onSurface,
+            tint = MaterialTheme.colorScheme.onPrimaryContainer,
             modifier = Modifier.size(26.dp),
         )
     }
@@ -986,6 +986,22 @@ private fun Scrubber(position: Double, duration: Double, onSeek: (Double) -> Uni
                 }
             }
         }
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Text(
+                formatTime(shown),
+                fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Text(
+                "-${formatTime(duration - shown)}",
+                fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
     }
 }
 
@@ -1025,7 +1041,7 @@ private fun PillButton(
     Row(
         modifier = modifier
             .clip(RoundedCornerShape(10.dp))
-            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+            .background(MaterialTheme.colorScheme.primaryContainer)
             .repeatOnHold(onStep = onClick)
             .semantics {
                 role = Role.Button
@@ -1038,7 +1054,7 @@ private fun PillButton(
         Icon(
             icon,
             contentDescription = label,
-            tint = MaterialTheme.colorScheme.onSurface,
+            tint = MaterialTheme.colorScheme.onPrimaryContainer,
             modifier = Modifier.size(24.dp),
         )
     }
