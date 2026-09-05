@@ -454,7 +454,7 @@ private fun TouchPad(
                         // a micro-swipe — in video players even a tiny
                         // horizontal swipe skips ±10 seconds, which read as
                         // mysterious rewinds on centre taps.
-                        val slop = maxOf(viewConfiguration.touchSlop, 20.dp.toPx())
+                        val slop = maxOf(viewConfiguration.touchSlop, COMMIT_DP.dp.toPx())
 
                         // Rim vs centre is decided on touch-down, so rim
                         // presses respond the instant the finger lands.
@@ -642,6 +642,13 @@ private fun Modifier.repeatOnHold(
 // moves the focus the same distance whichever way you swipe.
 private const val HORIZONTAL_SENSITIVITY = 1.0f
 private const val VERTICAL_SENSITIVITY = 1.0f
+
+/**
+ * How far the finger must travel before a gesture commits as a swipe. Below
+ * it everything is a tap — the gate that keeps tap drift from becoming a
+ * micro-swipe (which video players read as a +-10 second skip).
+ */
+private const val COMMIT_DP = 40
 
 /**
  * One rim arrow: a tap target sitting in the ring between the pad edge and the
