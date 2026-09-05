@@ -54,7 +54,14 @@ android {
             signingConfig = signingConfigs.findByName("release")
         }
         debug {
-            isMinifyEnabled = false
+            // Shrunk too: the CI release artifact is a debug APK, and without
+            // R8 it ships every unused icon from material-icons-extended.
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro",
+            )
             buildConfigField("boolean", "WIRE_LOGGING", wireLogging)
         }
     }
