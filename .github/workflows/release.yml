@@ -25,7 +25,7 @@ jobs:
       # existing install needs one uninstall first.
       - name: Generate CI signing keystore
         run: |
-          keytool -genkeypair -v -keystore ci-release.keystore \
+          keytool -genkeypair -v -keystore app/ci-release.keystore \
             -alias atvremote -keyalg RSA -keysize 2048 -validity 10000 \
             -storepass ci-build-pass -keypass ci-build-pass \
             -dname "CN=Apple TV Remote CI"
