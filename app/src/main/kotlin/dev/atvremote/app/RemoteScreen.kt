@@ -454,7 +454,7 @@ private fun TouchPad(
                         // a micro-swipe — in video players even a tiny
                         // horizontal swipe skips ±10 seconds, which read as
                         // mysterious rewinds on centre taps.
-                        val slop = maxOf(viewConfiguration.touchSlop, COMMIT_DP.dp.toPx())
+                        val slop = maxOf(viewConfiguration.touchSlop, RIM_COMMIT_DP.dp.toPx())
 
                         // Rim vs centre is decided on touch-down, so rim
                         // presses respond the instant the finger lands.
@@ -515,7 +515,7 @@ private fun TouchPad(
                                         val event = awaitPointerEvent()
                                         val change = event.changes.firstOrNull { it.id == down.id } ?: break
                                         if (change.changedToUp()) { tap = true; upPos = change.position; break }
-                                        if ((change.position - start).getDistance() > slop) { drag = true; break }
+                                        if ((change.position - start).getDistance() > CENTRE_COMMIT_DP.dp.toPx()) { drag = true; break }
                                         change.consume()
                                     }
                                 }
@@ -531,7 +531,7 @@ private fun TouchPad(
                                 val event = awaitPointerEvent()
                                 val change = event.changes.firstOrNull { it.id == down.id } ?: break
                                 if (change.changedToUp()) { tap = true; upPos = change.position; break }
-                                if ((change.position - start).getDistance() > slop) { drag = true; break }
+                                if ((change.position - start).getDistance() > RIM_COMMIT_DP.dp.toPx()) { drag = true; break }
                                 change.consume()
                             }
                         }
@@ -648,7 +648,14 @@ private const val VERTICAL_SENSITIVITY = 1.0f
  * it everything is a tap — the gate that keeps tap drift from becoming a
  * micro-swipe (which video players read as a +-10 second skip).
  */
-private const val COMMIT_DP = 40
+private const val RIM_COMMIT_DP = 40
+
+/**
+ * Centre taps get a larger allowance: the pad shrinks while the now-playing
+ * card is up, and a tap near the small circle's edge must still be a select —
+ * a rim misread there plays as a 10 second skip in the player.
+ */
+private const val CENTRE_COMMIT_DP = 60
 
 /**
  * One rim arrow: a tap target sitting in the ring between the pad edge and the
